@@ -20,24 +20,45 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-K8S_VERSION=${K8S_VERSION:-"1.2.0-alpha.7"}
+K8S_VERSION=${K8S_VERSION:-"1.2.0-beta.0"}
 
+SYSTEMCTL=$(which systemctl)
+if [[ $? == 0 ]];then
+    echo "docker.service should reset MountFlags= (defaults to shared, but docker sets it by default to MountFlags=slave)"
+    echo "documentation can be found here: https://github.com/docker/docker/blob/master/contrib/init/systemd/docker.service"
+    
+    read -p "Do you want that $0 do it for you ? [Y/N]"
+    if [[ ${REPLY} =~ ^[Yy]$ 
+          && -f /etc/systemctl/system/docker.service ]]
+    then
+        sudo sed -e "s/MountFlags=slave/MountFlags=shared/g"
+        sudo systemctl daemon-reload
+    else
+        echo "Unable to find docker.service, exiting"
+        exit 1
+    fi
+fi
+
+mount --bind /var/lib/kubelet /var/lib/kubelet
+mount --make-shared /var/lib/kubelet
+
+# start kubelet, etcd, apiserver, controller-manager, kube-proxy
 docker run \
   --volume=/:/rootfs:ro \
   --volume=/sys:/sys:ro \
   --volume=/var/lib/docker/:/var/lib/docker:rw \
-  --volume=/var/lib/kubelet/:/var/lib/kubelet:rw \
+  --volume=/var/lib/kubelet/:/var/lib/kubelet:shared \
   --volume=/var/run:/var/run:rw \
   --net=host \
   --pid=host \
   --privileged=true \
   -d gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
   /hyperkube kubelet \
-    --containerized \
     --hostname-override="127.0.0.1" \
     --address="0.0.0.0" \
     --api-servers=http://localhost:8080 \
     --config=/etc/kubernetes/manifests \
     --cluster-dns=10.0.0.10 \
     --cluster-domain=cluster.local \
-    --allow-privileged=true --v=2
+    --allow-privileged=true \
+    --v=2
